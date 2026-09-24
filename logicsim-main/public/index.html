@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta content="text/html;charset=utf-8" http-equiv="content-type" />
+    <meta content="IE=edge" http-equiv="X-UA-Compatible" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LogicSim · 逻辑表达式电路图</title>
+    <link rel="stylesheet" type="text/css" href="lib/joint.css" />
+    <link href="lib/select2.min.css" rel="stylesheet" />
+    <link href="lib/w3.css" rel="stylesheet" />
+    <link rel="stylesheet" type="text/css" href="style.css" />
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('logicsim-theme');
+                if (t !== 'dark' && t !== 'light') {
+                    t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+                }
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) { }
+        })();
+    </script>
+
+    <!-- dependencies -->
+    <script src="lib/jquery.min.js"></script>
+    <script src="lib/lodash.min.js"></script>
+    <script src="lib/backbone.js"></script>
+    <script src="lib/graphlib.min.js"></script>
+    <script src="lib/dagre.min.js"></script>
+    <script src="lib/joint.js"></script>
+    <script src="lib/select2.min.js"></script>
+    <script src="LogicParser.js"></script>
+    <script src="Expression.js"></script>
+</head>
+
+<body>
+    <!-- content -->
+    <div class="joint-app">
+        <header class="app-header">
+            <div class="mini-map">
+                <div id="mini-paper"></div>
+                <div id="mini-view">
+                    <div id="mini-resize"></div>
+                </div>
+            </div>
+            <div class="title-container">
+                <div class="toolbar">
+                    <div class="toolbar-row">
+                        <select id="parseMode" class="mode-select" title="表达式解析模式">
+                            <option value="infix">中缀表达式 (a &amp; b)</option>
+                            <option value="rpn">逆波兰表达式 (a b .)</option>
+                        </select>
+                        <button id="themeToggle" class="btn btn-ghost" onclick="app.toggleTheme()">🌙 深色</button>
+                        <span class="spacer"></span>
+                        <button class="btn btn-green" onclick="document.getElementById('fileToLoad').click()">📂 载入文本</button>
+                        <input type="file" id="fileToLoad" hidden />
+                        <button class="btn btn-blue" onclick="app.saveTextAsFile()">💾 保存文本</button>
+                        <input class="filename-input" id="inputFileNameToSaveAs" value="默认保存名称" />
+                    </div>
+                    <div class="toolbar-row grow">
+                        <textarea id="ReversePol" class="expr-input"
+                            placeholder="输入逻辑表达式，例如：(a &amp; b) | !c   或   a XOR b"></textarea>
+                        <button class="btn btn-parse" onclick="app.parseLogic()">解析文本</button>
+                    </div>
+                    <details class="model-details">
+                        <summary>JSON 模型</summary>
+                        <div class="model-area">
+                            <textarea id="myModel" class="model-input">{
+  "nodeArray": [],
+  "linkArray": []
+}</textarea>
+                            <div class="model-buttons">
+                                <button id="LoadButton" class="btn btn-green" onclick="app.load()">文本转图</button>
+                                <button id="SaveButton" class="btn btn-blue" onclick="app.save()">图转文本</button>
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            </div>
+        </header>
+
+        <div class="app-body">
+            <div class="left-container">
+                <div class="panel-title">组件图例</div>
+                <ul class="component-list">
+                    <li><span class="legend-dot" style="background:#FE854F"></span>0 / Zero 常量</li>
+                    <li><span class="legend-dot" style="background:#31D0C6"></span>1 / One 常量</li>
+                    <li><span class="legend-dot" style="background:#ff0000"></span>Import 输入变量</li>
+                    <li><span class="legend-dot" style="background:#ff00ff"></span>Export 输出</li>
+                    <li><span class="legend-dot" style="background:#ffcccc"></span>SEL 选择器（决策）</li>
+                </ul>
+                <div class="panel-title">当前变量</div>
+                <div id="var-list" class="var-list"><span class="muted">暂无变量</span></div>
+            </div>
+
+            <div class="main-container">
+                <div id="paper-container">
+                    <div id="paper" style="cursor:grab">
+                    </div>
+                </div>
+            </div>
+
+            <div id="app-resize">
+                <div style="position:absolute;left:-35px;background-image:url(assets/box-arrow-in-right.svg);background-size:100%;width:30px;height:30px;"
+                    onclick="app.ResizeBlock()"></div>
+            </div>
+
+            <div class="right-container">
+                <div class="panel-title">元素属性</div>
+                <div class="field">
+                    <label>元素名称</label>
+                    <input type="text" id="ERName" />
+                </div>
+                <div class="field">
+                    <label>元素备注</label>
+                    <textarea id="ERMemo"></textarea>
+                </div>
+                <button id="ERSetName" class="btn btn-parse btn-block" onclick="app.ChangeName()">保存修改</button>
+
+                <div class="panel-title">真值表</div>
+                <div id="truth-table-container" class="truth-table-wrap"><span class="muted">解析表达式后自动生成真值表</span></div>
+
+                <div class="help-text">
+                    在输入框内输入逻辑表达式后点击“解析文本”。<br />
+                    支持运算符（优先级从高到低）：<br />
+                    <b>非 NOT</b>：<code>!</code> <code>~</code> <code>¬</code> <code>NOT</code><br />
+                    <b>与 AND</b>：<code>&amp;</code> <code>&amp;&amp;</code> <code>·</code> <code>∧</code> <code>AND</code><br />
+                    <b>异或 XOR</b>：<code>^</code> <code>⊕</code> <code>XOR</code><br />
+                    <b>或 OR</b>：<code>|</code> <code>||</code> <code>∨</code> <code>OR</code><br />
+                    支持括号 <code>( )</code>，如 <code>(a &amp; b) | !c</code>。<br />
+                    切换到“逆波兰表达式”模式可使用原有 <code>.</code> <code>,</code> <code>&lt;</code> <code>&gt;</code> <code>=</code> 语法。
+                </div>
+            </div>
+
+            <div class="bottom-container">
+                <p id="status">Diagram Model loaded from Json Format.</p>
+            </div>
+        </div>
+    </div>
+    <script src="ViewGen.js">
+    </script>
+</body>
+
+</html>
